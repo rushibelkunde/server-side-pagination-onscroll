@@ -1,94 +1,100 @@
-import React, { Suspense } from 'react'
-import { json, useLoaderData, useSubmit } from '@remix-run/react'
-import { PrismaClient } from '@prisma/client'
-import { DragDropContext, Draggable, Droppable, DropResult } from '@hello-pangea/dnd'
-import { ActionFunction, LoaderFunction } from '@remix-run/node'
-import { useVirtualizer } from '@tanstack/react-virtual'
-import Stage from '~/components/stage'
+import React from 'react';
+import { json, useLoaderData, useSubmit } from '@remix-run/react';
 
-const prisma = new PrismaClient()
+import { DragDropContext, DropResult } from '@hello-pangea/dnd';
+import { ActionFunction, LoaderFunction } from '@remix-run/node';
+import Stage from '~/components/stage';
+import { db } from '~/services/db.server';
 
-export const loader : LoaderFunction= async ({request, params}) => {
-  // Fetch stages with associated projects
+export const loader: LoaderFunction = async ({ request }) => {
+  const searchParams = new URL(request.url).searchParams;
+  const page = parseInt(searchParams.get("page") as string) || 0;
+  const stageId = searchParams.get("stageId");
 
-  const limit = 10
+  const limit = 10; // Number of projects per page
 
-  const searchParams = new URL(request.url).searchParams
-  const page = parseInt(searchParams.get("page") as string) || 0
-  const stages = await prisma.stage.findMany({
-   
+  // Fetch stages with paginated projects
+  const stages = await db.stage.findMany({
     include: {
       project: {
         skip: limit * page,
-        take: limit
-      }
+        take: limit,
+        where: stageId ? { stageId: stageId } : {},
+      },
     },
     orderBy: {
-      order: 'asc', // Sort stages by the order field
+      order: 'asc',
     },
-  })
+  });
 
-  return json({ stages })
-}
+  // Get the total page count for each stage
+  const pageCounts = await Promise.all(
+    stages.map(async (stage) => {
+      const totalProjects = await db.project.count({
+        where: { stageId: stage.id },
+      });
+      const totalPages = Math.ceil(totalProjects / limit);
+      return { stageId: stage.id, totalPages };
+    })
+  );
 
-export const action : ActionFunction = async ({ request }) => {
-  const formData = await request.formData()
-  const projectId = formData.get('projectId') as string
-  const newStageId = formData.get('newStageId') as string
+  // Convert the array into an object for easier access by stageId
+  const pageCountsObject = pageCounts.reduce((acc, { stageId, totalPages }) => {
+    acc[stageId] = { totalPages };
+    return acc;
+  }, {});
 
-  // Update the project's stage in the database
-  if(projectId && newStageId){
-    await prisma.project.update({
+  console.log("pageCountsObject", pageCountsObject); // Debugging log
+
+  return json({ stages, pageCounts: pageCountsObject });
+};
+
+
+export const action: ActionFunction = async ({ request }) => {
+  const formData = await request.formData();
+  const projectId = formData.get('projectId') as string;
+  const newStageId = formData.get('newStageId') as string;
+
+  if (projectId && newStageId) {
+    await db.project.update({
       where: { id: projectId },
       data: { stageId: newStageId },
-    })
+    });
   }
- 
 
-  return json({ success: true })
-}
-
+  return json({ success: true });
+};
 
 const Kanban = () => {
-  const { stages } = useLoaderData<typeof loader>()
-  const submit = useSubmit()
+  const { stages, pageCounts } = useLoaderData<typeof loader>();
+  const submit = useSubmit();
 
-
-
-
-
-  // Handle the drag end event
   const handleOnDragEnd = (result: DropResult) => {
-    const { source, destination, draggableId } = result
+    const { source, destination, draggableId } = result;
 
-    // If there's no destination (dropped outside), do nothing
-    if (!destination) return
+    if (!destination) return;
 
-    // If the source and destination are the same, do nothing
     if (source.droppableId === destination.droppableId && source.index === destination.index) {
-      return
+      return;
     }
 
-    // Submit to the action with projectId (draggableId) and the new stageId (destination.droppableId)
     submit(
       { projectId: draggableId, newStageId: destination.droppableId },
       { method: 'post' }
-    )
-  }
+    );
+  };
 
   return (
-    // <Suspense>
     <DragDropContext onDragEnd={handleOnDragEnd}>
       <div className="w-full max-w-7xl mx-auto px-4 py-8">
-        <div className="flex gap-6 overflow-x-auto" style={{ height: '600px' }}> {/* Fixed height */}
+        <div className="flex gap-6 overflow-x-auto" style={{ height: '600px' }}>
           {stages.map((stage) => (
-            <Stage key={stage.id} stage={stage}/>
+            <Stage key={stage.id} stage={stage} totalPages={pageCounts[stage.id].totalPages} />
           ))}
         </div>
       </div>
     </DragDropContext>
-    // </Suspense>
-  )
-}
+  );
+};
 
-export default Kanban
+export default Kanban;
