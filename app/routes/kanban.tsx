@@ -11,7 +11,7 @@ export const loader: LoaderFunction = async ({ request }) => {
   const page = parseInt(searchParams.get("page") as string) || 0;
   const stageId = searchParams.get("stageId");
 
-  const limit = 10; // Number of projects per page
+  const limit = 6; // Number of projects per page
 
   // Fetch stages with paginated projects
   const stages = await db.stage.findMany({

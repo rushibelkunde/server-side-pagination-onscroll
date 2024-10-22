@@ -1,6 +1,7 @@
 import { Draggable, Droppable } from '@hello-pangea/dnd';
 import { useSearchParams, useSubmit } from '@remix-run/react';
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import throttle from 'lodash.throttle'; // Import lodash throttle
 
 const Stage = ({ stage, totalPages }) => {
   const stageRef = useRef<HTMLElement>(null);
@@ -8,55 +9,74 @@ const Stage = ({ stage, totalPages }) => {
   const [page, setPage] = useState(0);
   const submit = useSubmit();
   const [loading, setLoading] = useState(false);
-  const [projects, setProjects] = useState([...stage.project])
+  const [projects, setProjects] = useState([...stage.project]);
 
-  useEffect(()=> {
-    setProjects((prev)=> ([...prev, stage.project]))
+  // Fetch projects when page changes
+  useEffect(() => {
+    if (page >= 0 && page < totalPages) {
+      setLoading(true);
+      // Append projects for downward scroll or prepend for upward scroll
+      setProjects((prev) =>
+        page > 0 && stage.project.length ? [...prev, ...stage.project] : [...stage.project, ...prev]
+      );
+      setLoading(false);
+    }
+  }, [page, stage.project]);
 
-  },[page])
-
+  // Scroll handling with throttle for both directions
   useEffect(() => {
     const handleScroll = () => {
-      if (stageRef.current) {
+      if (stageRef.current && !loading) {
         const { scrollTop, scrollHeight, clientHeight } = stageRef.current;
-        console.log(scrollTop, scrollHeight, clientHeight)
-        if (scrollTop + clientHeight >= scrollHeight - 7 && !loading) {
+
+        // Detect downward scrolling and fetch new projects
+        if (scrollTop + clientHeight >= scrollHeight - 7 && page < totalPages - 1) {
           setLoading(true);
+          const nextPage = page + 1;
+          setPage(nextPage);
 
-          // Increase the page number
-          const newPage = page + 1;
-          console.log(stage) 
-          if(totalPages > page+1){
-            
-            setPage(newPage);
-            const params = new URLSearchParams(searchParams);
-            params.set('page', newPage.toString());
-            params.set('stageId', stage.id);
-            setSearchParams(params);
-  
-            // Trigger submit to refetch data with new page
-            submit(params, { method: 'get', replace: true });
-          }
-         
+          const params = new URLSearchParams(searchParams);
+          params.set('page', nextPage.toString());
+          params.set('stageId', stage.id);
+          setSearchParams(params);
+          submit(params, { method: 'get', replace: true });
 
-          // Set searchParams to include the page and stageId
-         
+          setLoading(false);
+        }
+
+        // Detect upward scrolling and fetch previous projects
+        if (scrollTop <= 7 && page > 0) {
+          setLoading(true);
+          const prevPage = page - 1;
+          setPage(prevPage);
+
+          const params = new URLSearchParams(searchParams);
+          params.set('page', prevPage.toString());
+          params.set('stageId', stage.id);
+          setSearchParams(params);
+          submit(params, { method: 'get', replace: true });
 
           setLoading(false);
         }
       }
     };
 
+    // Throttle the scroll event
+    const throttledHandleScroll = throttle(handleScroll, 200);
+
     if (stageRef.current) {
-      stageRef.current.addEventListener('scroll', handleScroll);
+      stageRef.current.addEventListener('scroll', throttledHandleScroll);
     }
 
     return () => {
       if (stageRef.current) {
-        stageRef.current.removeEventListener('scroll', handleScroll);
+        stageRef.current.removeEventListener('scroll', throttledHandleScroll);
       }
     };
-  }, [stageRef, page, searchParams, setSearchParams, submit, loading, stage.id]);
+  }, [stageRef, page, searchParams, setSearchParams, submit, loading, stage.id, totalPages]);
+
+  // Memoize the projects to prevent unnecessary re-renders
+  const memoizedProjects = useMemo(() => projects, [projects]);
 
   return (
     <Droppable droppableId={stage.id} key={stage.id}>
@@ -71,7 +91,7 @@ const Stage = ({ stage, totalPages }) => {
           </h2>
 
           <ul className="space-y-4 overflow-y-auto" style={{ maxHeight: '500px' }} ref={stageRef}>
-            {projects.map((project, index) => (
+            {memoizedProjects.map((project, index) => (
               <Draggable key={project.id} draggableId={project.id} index={index}>
                 {(provided) => (
                   <li
